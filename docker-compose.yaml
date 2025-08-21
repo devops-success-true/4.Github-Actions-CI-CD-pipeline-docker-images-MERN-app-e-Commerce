@@ -19,7 +19,7 @@ services:
       context: .                # 👈 switch to root so we can access ./nginx/
       dockerfile: ./frontend/Dockerfile
       args:
-        REACT_APP_API_URL: ${REACT_APP_API_URL:-/api}
+        REACT_APP_BASE_URL: ${REACT_APP_BASE_URL:-/api}
     ports:
       - "80:80"
     depends_on:
