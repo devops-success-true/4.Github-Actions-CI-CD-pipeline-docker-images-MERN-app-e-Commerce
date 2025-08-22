@@ -1,392 +1,286 @@
-# MERN Stack E-commerce – Monolithic Deployment (VM + Nginx + Mongo Atlas)
+# Dockerized MERN Stack E-commerce Application
 
-This repository demonstrates the deployment of a **MERN stack e-commerce application** in a **monolithic architecture** on a Linux VM.  
-The app is served through **Nginx** as a reverse proxy, with **frontend (React build)** and **backend (Node.js/Express API)** running on the same VM, while **MongoDB Atlas** is used as the database.  
-
-This project is part of a **DevOps showcase** where base application code from [1.MERN-stack-E-commerce-basecode-for-labs](https://github.com/devops-success-true/1.MERN-stack-E-commerce-basecode-for-labs.git) is taken and deployed to demonstrate **environment setup, reverse proxying, build automation, and environment configuration**.
-
----
-
-## 📌 Architecture Overview
-- **Frontend (React)** → Built and served as static files by **Nginx**.  
-- **Backend (Node.js/Express)** → Running locally on port `8000`, proxied by **Nginx** at `/api/`.  
-- **Database (MongoDB Atlas)** → External managed DB connection.  
-- **Nginx** → Handles:
-  - Serving the React SPA build (`/var/www/mern/build`)
-  - Proxying `/api/` requests to Node backend
-  - Logs for observability  
+This repository contains a production-grade Docker Compose setup for deploying a MERN stack e-commerce application.
+The Dockerization was built on top of the base source code available here:
+➡️ MERN Base Repo: https://github.com/devops-success-true/1.MERN-stack-E-commerce-basecode-for-labs
 
 ---
 
-## ⚙️ Deployment Steps
+## 🔹 Implementation Overview
 
-### 1. Clone the Base Code
-```bash
-git clone https://github.com/devops-success-true/1.MERN-stack-E-commerce-basecode-for-labs.git
-cd mern-ecommerce
+- Dockerfiles were created for both the **frontend** and **backend**.
+- A custom **nginx.conf** file lives under the dedicated `nginx/` folder.
+- Both Dockerfiles use **multi-stage builds**:
+  - ✅ Smaller final image sizes
+  - ✅ Faster rebuilds after new commits
+- **Docker Compose** orchestrates the stack:
+  - Containers: `frontend` (Nginx + React static build), `backend` (Node/Express), and a one‑shot `seed` service.
+  - The **seed container** runs `npm run seed` to populate MongoDB with initial data (products, users, etc.).
+    - Runs **only when explicitly invoked** (not on every deploy).
+    - Use it to bootstrap brand‑new environments.
+- **Resiliency**:
+  - `restart: unless-stopped` ensures containers auto‑restart after crashes or VM reboot.
+  - The app comes back online automatically as long as Docker service starts on boot.
+
+---
+
+## 🔹 Project Structure
+
+```
+3.-Dockerizing-docker-composing-MERN-stack-E-commerce/
+│
+├── backend/
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── index.js
+│   └── ...
+│
+├── frontend/
+│   ├── Dockerfile
+│   ├── package.json
+│   └── ...
+│
+├── nginx/
+│   └── nginx.conf
+│
+├── docker-compose.yaml
+├── .env
+└── README.md
 ```
 
 ---
 
-### 2. Install Node.js via NVM
-We use **NVM (Node Version Manager)** to manage Node.js versions.  
-This ensures reproducibility of runtime across environments.
+## 🔹 Environment Variables
 
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh | bash
-source ~/.bashrc
-nvm install 21.1.0
-nvm use 21.1.0
-```
+Defined in `.env` (exclude this file from Git using `.gitignore`):
 
----
-
-### 3. Setup Frontend
-Install dependencies and build React app.
-
-```bash
-cd frontend
-npm install --legacy-peer-deps
-```
-
-The flag `--legacy-peer-deps` bypasses strict peer dependency checks.  
-This is required because many React projects have peer-dependency version conflicts.
-
-#### Configure Environment
-```bash
-sudo mv .example.dev .env
-```
-
-Edit `.env`:
-```env
-REACT_APP_BASE_URL="http://192.168.1.xx/api"
-```
-
-- **`REACT_APP_BASE_URL`** → tells React app where the backend API is located.  
-  - In this VM deployment: it points to `http://VM_IP/api`, served by **Nginx reverse proxy**.  
-  - Without Nginx, frontend would need to call `http://VM_IP:8000/`.  
-
-#### Build React app
-```bash
-npm run build
-```
-
-This generates optimized static files into `/frontend/build/`.  
-These will later be copied to `/var/www/mern/build/` for Nginx to serve.
-
----
-
-### 4. Setup Backend
-```bash
-cd ../backend
-npm install
-```
-
-#### Configure Environment
-```bash
-sudo mv example.env .env
-```
-
-Populate `.env`:
-```env
+```ini
 # Mongo Atlas connection
-MONGO_URI="mongodb+srv://user:pass@cluster0.mongodb.net/mydb?retryWrites=true&w=majority"
+MONGO_URI=mongodb+srv://<user>:<password>@cluster0.mongodb.net/ecommerce
 
-# Frontend origin (point to VM IP with port 80 for Nginx)
-ORIGIN="http://192.168.1.xx"
+# Frontend origin (host/domain of frontend service)
+ORIGIN=http://192.168.1.50   # replace with your VM IP or domain
 
-# Email (optional: for OTP/password reset features)
-EMAIL="xxxxxx@gmail.com@gmail.com"
-PASSWORD="xyxyxyxy@2"
+# Email config (for OTP/reset flows)
+EMAIL=youremail@example.com
+PASSWORD=yourpassword
 
-# Security & tokens
-SECRET_KEY="very_strong_secret_key"
-LOGIN_TOKEN_EXPIRATION="30d"
-OTP_EXPIRATION_TIME="120000"
-PASSWORD_RESET_TOKEN_EXPIRATION="2m"
-COOKIE_EXPIRATION_DAYS="30"
+# JWT, cookies, OTP
+LOGIN_TOKEN_EXPIRATION=30d
+OTP_EXPIRATION_TIME=120000
+PASSWORD_RESET_TOKEN_EXPIRATION=2m
+COOKIE_EXPIRATION_DAYS=30
 
-# Environment mode
-PRODUCTION="true"
+# Secret key
+SECRET_KEY=super_secret_value
+
+# Frontend API base (build-time for React; proxied via Nginx to backend)
+REACT_APP_BASE_URL=/api
 ```
 
-**Purpose of variables:**
-
-- **`MONGO_URI`** → Connection string to MongoDB Atlas.  
-
-- **`ORIGIN`** → Mainly used for **CORS (Cross-Origin Resource Sharing)**.  
-  - If your backend serves APIs and frontend is on a different domain/port, CORS rules apply.  
-  - In this **Nginx reverse-proxy setup**, frontend and backend appear to come from the **same origin** (e.g., `http://192.168.1.xx`), so CORS is effectively bypassed.  
-  - ⚠️ If `ORIGIN` is **not defined** in this monolithic deployment → the app will still work fine.  
-  - In **multi-hosted deployments** (e.g., frontend on Vercel, backend on Render), missing `ORIGIN` would trigger **CORS errors** (blocked API requests).  
-  - 👉 With Nginx monolithic deployment → `ORIGIN` doesn’t matter much. With cloud-hosted setups → `ORIGIN` is **mandatory**.  
-
-- **`EMAIL` / `PASSWORD`** → SMTP credentials used by the backend for sending **OTP (One-Time Passwords)** and **password reset emails**.  
-  - Without them → features like **Forgot Password** or **Login with OTP** won’t work.  
-  - The rest of the app (browsing products, cart, checkout) is unaffected.  
-
-- **OTP-related variables** (`LOGIN_TOKEN_EXPIRATION`, `OTP_EXPIRATION_TIME`, `PASSWORD_RESET_TOKEN_EXPIRATION`, `COOKIE_EXPIRATION_DAYS`) → Control expiration times for login tokens, OTPs, and password resets.  
-
-- **`SECRET_KEY`** → Secret key for signing JWT tokens (critical for authentication security).   
+> Notes
+> - `ORIGIN` is used by the backend for CORS (what browser origins are allowed).
+> - `REACT_APP_BASE_URL` is baked into the frontend build (e.g., `/api`), and Nginx proxies `/api` → `backend:8000` inside the Docker network.
 
 ---
 
-### 5. Install & Configure Nginx
+## 🔹 Key Commands
+
+**Build & Start Services**
 ```bash
-sudo apt install nginx -y
-sudo systemctl enable nginx
-sudo systemctl start nginx
+docker compose up -d --build
 ```
 
-#### Remove defaults
+**Stop & Remove Containers**
 ```bash
-sudo rm /etc/nginx/sites-available/default
-sudo rm /etc/nginx/sites-enabled/default
+docker compose down
 ```
 
-#### Create Nginx Config
+**View Logs**
 ```bash
-sudo vi /etc/nginx/sites-available/mern.conf
+docker compose logs -f
 ```
 
+**Rebuild Only Frontend**
+```bash
+docker compose build frontend
+docker compose up -d frontend
+```
+
+**Run Database Seeder (one-shot)**
+```bash
+docker compose run --rm seed
+```
+
+**Full Clean (containers, images, anonymous volumes, orphans)**
+```bash
+docker compose down -v --rmi all --remove-orphans
+```
+
+---
+
+## 🔹 Nginx Configuration
+
+You can use either the **simplified** config (most common) or the **production-grade** config (adds gzip, caching, headers, timeouts). Both assume Compose service name `backend` on port `8000`.
+
+### Option A — Simplified (most common)
+Create `nginx/nginx.conf` with:
 ```nginx
 server {
     listen 80;
-    server_name 192.168.1.xx;   # Replace with domain later (e.g. shop.myshop.com)
 
-    # Root for React build
-    root /home/kastro/mern-ecommerce/frontend/build;
-    index index.html;
-
-    # Handle React single-page app routes
+    # Serve React build
     location / {
+        root /usr/share/nginx/html;
+        index index.html;
         try_files $uri /index.html;
     }
 
-    # Backend API proxy
+    # Proxy API to backend
     location /api/ {
-        proxy_pass http://127.0.0.1:8000/;   # Node backend running locally
+        proxy_pass http://backend:8000/;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
     }
-
-    # Logs
-    access_log /var/log/nginx/mern_access.log;
-    error_log  /var/log/nginx/mern_error.log;
 }
 ```
 
-#### Enable Config
-```bash
-sudo ln -s /etc/nginx/sites-available/mern.conf /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
+### Option B — Production-grade
+Create `nginx/nginx.conf` with:
+```nginx
+worker_processes  auto;
+
+events {
+  worker_connections  1024;
+}
+
+http {
+  include       /etc/nginx/mime.types;
+  default_type  application/octet-stream;
+
+  # Performance
+  sendfile        on;
+  tcp_nopush      on;
+  tcp_nodelay     on;
+  keepalive_timeout  65;
+
+  # Gzip
+  gzip on;
+  gzip_comp_level 5;
+  gzip_min_length 256;
+  gzip_proxied any;
+  gzip_types
+    text/plain text/css application/json application/javascript
+    application/x-javascript text/xml application/xml application/xml+rss
+    image/svg+xml application/font-woff2 application/vnd.ms-fontobject
+    font/ttf font/opentype;
+
+  # WebSocket upgrade map
+  map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+  }
+
+  upstream backend_upstream {
+    server backend:8000;
+    keepalive 32;
+  }
+
+  server {
+    listen 80;
+    server_name _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # Security headers (baseline)
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy no-referrer-when-downgrade always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Cache static assets aggressively (filenames are hash-stamped)
+    location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|otf)$ {
+      expires 1y;
+      add_header Cache-Control "public, max-age=31536000, immutable";
+      try_files $uri =404;
+      access_log off;
+    }
+
+    # Do NOT cache the app shell
+    location = /index.html {
+      add_header Cache-Control "no-store, max-age=0";
+      try_files $uri =404;
+    }
+
+    # SPA fallback
+    location / {
+      try_files $uri /index.html;
+    }
+
+    # API proxy
+    location /api/ {
+      proxy_pass http://backend_upstream;
+      proxy_http_version 1.1;
+
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+
+      proxy_connect_timeout 5s;
+      proxy_read_timeout 60s;
+      client_max_body_size 10m;
+    }
+
+    # Health
+    location = /healthz {
+      return 200 "ok\n";
+      add_header Content-Type text/plain;
+      access_log off;
+    }
+  }
+}
 ```
 
 ---
 
-### 6. Start Backend API
-From backend folder:
-```bash
-npm start
-```
+## 🔹 Access
 
-At this point:
-- **Node.js backend** connects to **MongoDB Atlas**.  
-- **Nginx** serves React build and proxies API requests.  
+- Frontend: `http://<VM-IP-or-domain>/`
+- API (via Nginx proxy): `http://<VM-IP-or-domain>/api/...`
 
 ---
 
-# 🛠 Deployment Automation with Shell Scripts
+## 🔹 Production Notes
 
-To streamline deployment and avoid manual steps, this project includes **automation scripts** that handle build creation, file deployment, permission enforcement, and Nginx reloads. These scripts follow **DevOps best practices** by ensuring deployments are **repeatable, idempotent, and safe**.
-
----
-
-## 📦 build_deploy.sh
-
-Automates the React frontend build and deployment into `/var/www/mern/build`.
-
-```bash
-#!/bin/bash
-# Purpose: Build React frontend and deploy to /var/www/mern/build with Nginx reload
-
-set -e  # exit on error
-
-FRONTEND_DIR="/home/kastro/mern-ecommerce/frontend"
-DEPLOY_DIR="/var/www/mern/build"
-
-echo "Building frontend..."
-cd $FRONTEND_DIR
-npm run build
-
-echo "Ensuring target directory exists..."
-sudo mkdir -p $DEPLOY_DIR
-
-echo "Deploying build to $DEPLOY_DIR ..."
-sudo rm -rf $DEPLOY_DIR/*
-sudo cp -r $FRONTEND_DIR/build/* $DEPLOY_DIR/
-
-echo "Setting permissions ..."
-sudo chown -R www-data:www-data $DEPLOY_DIR
-sudo chmod -R 755 $DEPLOY_DIR
-
-echo "Reloading nginx ..."
-sudo systemctl reload nginx
-
-echo "Build deployed and nginx reloaded successfully!"
-```
-
-### 🔹 Highlights
-- **Clean deployments**: Old assets removed before copying new ones.  
-- **Permissions enforced**: Ensures ownership and access are always correct.  
-- **Automatic Nginx reload**: New builds are instantly served.  
-- **Error-safe**: Script stops on the first failure (`set -e`).  
+- Containers are **stateless**; persistent data lives in **MongoDB Atlas**.
+- `restart: unless-stopped` brings services back after VM reboot.
 
 ---
 
-## 🌐 nginx_server.sh
+## 🔹 Seeder Lifecycle (when it runs)
 
-Automates the Nginx configuration setup and reload.
-
-```bash
-#!/bin/bash
-set -e
-
-CONF_NAME="mern.conf"
-SRC_CONF="/etc/nginx/sites-available/$CONF_NAME"
-DST_CONF="/etc/nginx/sites-enabled/$CONF_NAME"
-
-# Copy project Nginx config to sites-available
-sudo cp /home/kastro/mern-ecommerce/nginx/mern.conf "$SRC_CONF"
-
-# Create symlink if missing
-if [ ! -L "$DST_CONF" ]; then
-    sudo ln -s "$SRC_CONF" "$DST_CONF"
-fi
-
-# Validate configuration
-sudo nginx -t
-
-# Reload only if syntax is valid
-if [ $? -eq 0 ]; then
-    sudo systemctl reload nginx
-    echo "Nginx reloaded with $CONF_NAME"
-else
-    echo "Nginx config test failed"
-    exit 1
-fi
-```
----
-
-# Backend Process Management with PM2
-
-For production we use **[PM2](https://pm2.keymetrics.io/)**, a Node.js process manager.  
-PM2 keeps the backend (`npm start`) always running, restarts it if it crashes, and makes sure it comes back automatically after server reboots.
-
-## Install PM2
-```bash
-sudo npm install -g pm2
-pm2 --version
-```
-- Installs PM2 globally so it can manage Node.js apps system-wide.  
-- Verify installation with the version command.
-
-## Start the backend with PM2
-```bash
-cd ~/mern-ecommerce/backend
-pm2 start npm --name "mern-backend" -- start
-```
-- `cd` into the backend folder.  
-- Run `npm start` under PM2, giving it the friendly name `mern-backend`.
-
-## Restart the app
-```bash
-pm2 restart mern-backend
-```
-- Restarts the backend process after code changes or config updates.
-
-## Enable auto-start on reboot
-```bash
-pm2 startup systemd
-```
-- Generates a systemd service for PM2.  
-- It prints a command like:
+- Seeding is **not** part of the normal app startup.
+- You run it **manually** when bootstrapping a **new environment**:
   ```bash
-  sudo env PATH=$PATH:/home/kastro/.nvm/versions/node/v21.7.3/bin \
-  /home/kastro/.nvm/versions/node/v21.7.3/lib/node_modules/pm2/bin/pm2 \
-  startup systemd -u kastro --hp /home/kastro
+  docker compose run --rm seed
   ```
-- Run that exact command so PM2 is registered with systemd for your user.
-
-## Save current process list
-```bash
-pm2 save
-```
-- Saves the current running processes (`mern-backend`) into PM2’s dump file.  
-- This ensures the same processes are restored on boot.
-
-## Verify after reboot
-```bash
-sudo reboot
-```
-After the system comes back up:
-```bash
-pm2 list
-```
-You should see `mern-backend` already running automatically.  
+- The container exits when it’s done. No persistent runtime impact.
 
 ---
 
-✅ **Conclusion**:  
-With this setup:  
-- **Frontend** is built and deployed automatically with `build_deploy.sh`.  
-- **Nginx** configuration is applied and validated via `nginx_server.sh`.  
-- **Backend** is supervised by **PM2**, configured to auto-start after reboots.  
+## 🔹 Troubleshooting (quick hits)
 
-This combination ensures the **MERN monolithic stack** is fully automated, resilient to crashes, and production-ready.  
-
----
-
-## 🎯 Access the Application
-Open in browser:
-```
-http://192.168.1.xx
-```
-
-✅ Features verified in deployment:
-- Register / Login (JWT + cookies)  
-- Product browsing with attributes (size, color, quantity)  
-- Cart & Checkout  
-- Order & Payment flow  
-- Reviews & Wishlist  
+- **Frontend builds but API 404s** → Check `nginx/nginx.conf` proxy (`backend:8000`) and that `backend` is healthy.
+- **CORS errors in browser** → Ensure `.env` `ORIGIN` matches your site origin (scheme/host/port) and backend reads it.
+- **React calling wrong API path** → Verify `REACT_APP_BASE_URL` used at build-time and Nginx proxies that prefix to backend.
+- **After reboot nothing is up** → Confirm Docker service is enabled and `restart: unless-stopped` is in compose.
 
 ---
 
-## 📂 Deployment Workflow
-1. **Frontend build** → React code → `/var/www/mern/build/`.  
-2. **Backend API** → Node.js running locally, proxied at `/api/`.  
-3. **MongoDB Atlas** → External DB connection.  
-4. **Nginx** → Central proxy & static file server.  
-5. **PM2** → Process manager ensuring backend uptime and auto-recovery.  
-6. **Automation scripts** → For repeatable, idempotent deployments.  
-
----
-
-## 🔒 Notes & Best Practices
-- `.env` files must **not** be committed to GitHub (use `.gitignore`).  
-- Use a **deployment script** (`build_deploy.sh`) to automate builds → copies frontend build to `/var/www/mern/build/` and fixes permissions.  
-- For production → run backend with **PM2** or a **systemd service** instead of `npm start`.  
-- Logs are written in `/var/log/nginx/mern_*.log` and `~/.pm2/logs/mern-backend-*.log`.  
-
----
-
-## 🚀 Next Steps (Future Enhancements)
-- Dockerize frontend & backend for easier portability.  
-- Cloud deployments in AWS and Azure 
-- Add CI/CD pipeline with **GitHub Actions** → auto-deploy build to VM.  
-- Extend monitoring with **Prometheus + Grafana**.  
-- Expand deployment to **Kubernetes (EKS/AKS)** with ingress controllers.  
+That’s it. Straightforward, production-like, and easy to extend (TLS at LB/CDN, add monitoring, or move to K8s).
