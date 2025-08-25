@@ -15,7 +15,7 @@ env:
 jobs:
   quality_checks:
     name: Lint + Sonar + Security
-    runs-on: [self-hosted, linux, x64, docker]
+    runs-on: [self-hosted, Linux, X64, docker]
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -78,7 +78,7 @@ jobs:
 
   build_push_backend:
     name: Build & Push Backend
-    runs-on: [self-hosted, linux, x64, docker]
+    runs-on: [self-hosted, Linux, X64, docker]
     needs: [quality_checks]
     steps:
       - uses: actions/checkout@v4
@@ -119,7 +119,7 @@ jobs:
 
   build_push_frontend:
     name: Build & Push Frontend
-    runs-on: [self-hosted, linux, x64, docker]
+    runs-on: [self-hosted, Linux, X64, docker]
     needs: [quality_checks]
     steps:
       - uses: actions/checkout@v4
@@ -162,7 +162,7 @@ jobs:
 
   deploy:
     name: Deploy to VM
-    runs-on: [self-hosted, linux, x64, docker]
+    runs-on: [self-hosted, Linux, X64, docker]
     needs: [build_push_backend, build_push_frontend]
     if: github.ref == 'refs/heads/main'
     steps:
