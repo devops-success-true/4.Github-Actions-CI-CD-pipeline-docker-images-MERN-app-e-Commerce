@@ -1,4 +1,4 @@
-name: ci-cd  # Workflow name in GitHub Actions
+name: ci-cd
 
 on:
   push:
@@ -8,12 +8,11 @@ on:
   workflow_dispatch:
 
 env:
-  FRONTEND_IMAGE: mern-frontend
-  BACKEND_IMAGE: mern-backend
-  REACT_APP_BASE_URL: /api
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/mern-frontend
+  BACKEND_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/mern-backend
+  REACT_APP_BASE_URL: ${{ vars.REACT_APP_BASE_URL }}
 
 jobs:
-
   quality_checks:
     name: Lint + Sonar + Security
     runs-on: [self-hosted, linux, x64, docker]
@@ -61,18 +60,18 @@ jobs:
         run: npx prettier --check .
 
       - name: Sonar Scan
+        if: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' }}
         uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
-          projectBaseDir: .
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORG }}
             -Dsonar.sources=backend,frontend
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
             -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info,frontend/coverage/lcov.info
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: Trivy FS scan
         uses: aquasecurity/trivy-action@0.24.0
@@ -91,17 +90,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Docker login
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker meta backend
+      - name: Docker metadata (backend)
         id: meta_be
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}
+          images: ${{ env.BACKEND_IMAGE }}
           tags: |
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
@@ -117,10 +116,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy Image backend
+      - name: Trivy Image scan (backend)
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
           format: table
           exit-code: '1'
           ignore-unfixed: true
@@ -133,17 +132,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Docker login
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker meta frontend
+      - name: Docker metadata (frontend)
         id: meta_fe
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_IMAGE }}
+          images: ${{ env.FRONTEND_IMAGE }}
           tags: |
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
@@ -161,10 +160,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy Image frontend
+      - name: Trivy Image scan (frontend)
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          image-ref: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           format: table
           exit-code: '1'
           ignore-unfixed: true
@@ -188,8 +187,8 @@ jobs:
       - name: Deploy via SSH
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          IMAGE_TAG: ${{ github.sha }}
+          DOCKERHUB_TOKEN:    ${{ secrets.DOCKERHUB_TOKEN }}
+          IMAGE_TAG:          ${{ github.sha }}
           MONGO_URI: ${{ secrets.MONGO_URI }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           EMAIL: ${{ secrets.EMAIL }}
