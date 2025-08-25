@@ -13,6 +13,7 @@ env:
   REACT_APP_BASE_URL: ${{ vars.REACT_APP_BASE_URL }}
 
 jobs:
+
   quality_checks:
     name: Lint + Sonar + Security
     runs-on: [self-hosted, linux, x64, docker]
@@ -21,46 +22,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node for backend
-        uses: actions/setup-node@v4
+      # Backend
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: backend/package-lock.json
-
       - name: Install backend deps
         working-directory: backend
         run: npm ci
-
       - name: ESLint backend
         working-directory: backend
         run: npx eslint . --ext .js,.jsx --max-warnings=0
-
       - name: Prettier backend
         working-directory: backend
         run: npx prettier --check .
 
-      - name: Setup Node for frontend
-        uses: actions/setup-node@v4
+      # Frontend
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - name: Install frontend deps
         working-directory: frontend
         run: npm ci --legacy-peer-deps
-
       - name: ESLint frontend
         working-directory: frontend
         run: npx eslint . --ext .js,.jsx --max-warnings=0
-
       - name: Prettier frontend
         working-directory: frontend
         run: npx prettier --check .
 
+      # Sonar (optional: set SONAR_* secrets/vars)
       - name: Sonar Scan
-        if: ${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_HOST_URL != '' }}
         uses: SonarSource/sonarqube-scan-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -73,6 +68,7 @@ jobs:
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
             -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info,frontend/coverage/lcov.info
 
+      # FS security scan
       - name: Trivy FS scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
@@ -96,7 +92,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker metadata (backend)
+      - name: Docker meta (backend)
         id: meta_be
         uses: docker/metadata-action@v5
         with:
@@ -105,7 +101,7 @@ jobs:
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build & Push backend image
+      - name: Build & Push backend
         uses: docker/build-push-action@v6
         with:
           context: ./backend
@@ -116,7 +112,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy Image scan (backend)
+      - name: Trivy Image (backend)
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
@@ -138,7 +134,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker metadata (frontend)
+      - name: Docker meta (frontend)
         id: meta_fe
         uses: docker/metadata-action@v5
         with:
@@ -147,7 +143,7 @@ jobs:
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build & Push frontend image
+      - name: Build & Push frontend
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -160,7 +156,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy Image scan (frontend)
+      - name: Trivy Image (frontend)
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
@@ -176,24 +172,28 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Add SSH key
+        shell: bash
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          printf "Host *
-	StrictHostKeyChecking no
-" > ~/.ssh/config
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          echo "${{ secrets.VM_SSH_KEY }}" > "$HOME/.ssh/id_rsa"
+          chmod 600 "$HOME/.ssh/id_rsa"
+          printf "Host *\n\tStrictHostKeyChecking no\n" > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
 
       - name: Deploy via SSH
+        shell: bash
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN:    ${{ secrets.DOCKERHUB_TOKEN }}
           IMAGE_TAG:          ${{ github.sha }}
+
           MONGO_URI: ${{ secrets.MONGO_URI }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           EMAIL: ${{ secrets.EMAIL }}
           PASSWORD: ${{ secrets.PASSWORD }}
           ORIGIN: ${{ secrets.ORIGIN }}
+
           LOGIN_TOKEN_EXPIRATION: ${{ vars.LOGIN_TOKEN_EXPIRATION }}
           OTP_EXPIRATION_TIME: ${{ vars.OTP_EXPIRATION_TIME }}
           PASSWORD_RESET_TOKEN_EXPIRATION: ${{ vars.PASSWORD_RESET_TOKEN_EXPIRATION }}
@@ -203,7 +203,10 @@ jobs:
         run: |
           ssh -p "${{ secrets.VM_SSH_PORT }}" "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" bash -lc '
             set -e
+
             mkdir -p ~/sourcecode
+
+            # write backend env
             cat > ~/sourcecode/backend.env <<EOF
 MONGO_URI=${MONGO_URI}
 SECRET_KEY=${SECRET_KEY}
@@ -217,11 +220,14 @@ COOKIE_EXPIRATION_DAYS=${COOKIE_EXPIRATION_DAYS}
 PRODUCTION=${PRODUCTION}
 PORT=${PORT}
 EOF
-            cd ~/sourcecode
+
             echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+
             export DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME"
             export IMAGE_TAG="'$IMAGE_TAG'"
-            docker compose -f docker-compose.prod.yaml pull
-            docker compose -f docker-compose.prod.yaml up -d --remove-orphans
+
+            docker compose -f ~/sourcecode/docker-compose.prod.yaml pull
+            docker compose -f ~/sourcecode/docker-compose.prod.yaml up -d --remove-orphans
+
             docker image prune -f
           '
