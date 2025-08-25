@@ -5,6 +5,7 @@ on:
     branches: [ main ]         # Only run on pushes to main
   pull_request:
     branches: [ main ]         # Also run on PRs into main
+  workflow_dispatch:
 
 env:
   # Image names (non-secret): keep them parameterized
