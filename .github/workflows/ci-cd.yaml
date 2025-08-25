@@ -7,9 +7,12 @@ on:
     branches: [ main ]         # Also run on PRs into main
 
 env:
-  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/mern-frontend  # Docker Hub repo for frontend
-  BACKEND_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/mern-backend   # Docker Hub repo for backend
-  REACT_APP_BASE_URL: /api  # Will be baked into frontend build
+  # Image names (non-secret): keep them parameterized
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/mern-frontend
+  BACKEND_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/mern-backend
+
+  # Frontend build-time base URL (non-secret)
+  REACT_APP_BASE_URL: ${{ vars.REACT_APP_BASE_URL }}
 
 jobs:
 
@@ -18,9 +21,9 @@ jobs:
     name: Lint + Sonar + Security
     runs-on: [self-hosted, linux, x64, docker]
     steps:
-      - uses: actions/checkout@v4   # Checkout repo
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0            # Sonar prefers full history for blame/PR decoration
+          fetch-depth: 0  # Sonar prefers full history for blame/PR decoration
 
       # --- Backend Lint / Format ---
       - name: Setup Node for backend
@@ -63,12 +66,12 @@ jobs:
         run: npx prettier --check .
 
       # --- SonarQube / SonarCloud scan ---
-      # If you're using SonarCloud, set SONAR_HOST_URL to https://sonarcloud.io
-      # Required secrets/vars:
-      #   secrets.SONAR_TOKEN (token from SonarQube/SonarCloud)
-      #   vars.SONAR_PROJECT_KEY (e.g., mern-app)
-      #   vars.SONAR_ORG (SonarCloud org key) - optional for self-hosted SonarQube
+      # Required:
+      #   secrets.SONAR_TOKEN
       #   secrets.SONAR_HOST_URL (e.g., https://sonarcloud.io or your SonarQube URL)
+      #   vars.SONAR_PROJECT_KEY
+      # Optional (SonarCloud only):
+      #   vars.SONAR_ORG
       - name: Sonar Scan
         uses: SonarSource/sonarqube-scan-action@v2
         env:
@@ -97,7 +100,7 @@ jobs:
   build_push_backend:
     name: Build & Push Backend
     runs-on: [self-hosted, linux, x64, docker]
-    needs: [quality_checks]   # only runs if quality job passes
+    needs: [quality_checks]
     steps:
       - uses: actions/checkout@v4
 
@@ -108,7 +111,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker meta backend
-        id: meta
+        id: meta_be
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.BACKEND_IMAGE }}
@@ -122,8 +125,8 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta_be.outputs.tags }}
+          labels: ${{ steps.meta_be.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -152,7 +155,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker meta frontend
-        id: meta
+        id: meta_fe
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.FRONTEND_IMAGE }}
@@ -166,8 +169,8 @@ jobs:
           context: .
           file: ./frontend/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta_fe.outputs.tags }}
+          labels: ${{ steps.meta_fe.outputs.labels }}
           build-args: |
             REACT_APP_BASE_URL=${{ env.REACT_APP_BASE_URL }}
           cache-from: type=gha
@@ -199,18 +202,55 @@ jobs:
 
       - name: Deploy via SSH
         env:
+          # Registry auth
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           IMAGE_TAG: ${{ github.sha }}
+
+          # Backend secrets (runtime)
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          EMAIL: ${{ secrets.EMAIL }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          ORIGIN: ${{ secrets.ORIGIN }}
+
+          # Backend non-secret runtime config
+          LOGIN_TOKEN_EXPIRATION: ${{ vars.LOGIN_TOKEN_EXPIRATION }}
+          OTP_EXPIRATION_TIME: ${{ vars.OTP_EXPIRATION_TIME }}
+          PASSWORD_RESET_TOKEN_EXPIRATION: ${{ vars.PASSWORD_RESET_TOKEN_EXPIRATION }}
+          COOKIE_EXPIRATION_DAYS: ${{ vars.COOKIE_EXPIRATION_DAYS }}
+          PRODUCTION: ${{ vars.PRODUCTION }}
+          PORT: ${{ vars.PORT }}
         run: |
           ssh -p "${{ secrets.VM_SSH_PORT }}" "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" bash -lc '
             set -e
+
+            # Create or update backend.env from pipeline-provided env vars
+            mkdir -p ~/sourcecode
+            cat > ~/sourcecode/backend.env <<EOF
+MONGO_URI=${MONGO_URI}
+SECRET_KEY=${SECRET_KEY}
+EMAIL=${EMAIL}
+PASSWORD=${PASSWORD}
+ORIGIN=${ORIGIN}
+LOGIN_TOKEN_EXPIRATION=${LOGIN_TOKEN_EXPIRATION}
+OTP_EXPIRATION_TIME=${OTP_EXPIRATION_TIME}
+PASSWORD_RESET_TOKEN_EXPIRATION=${PASSWORD_RESET_TOKEN_EXPIRATION}
+COOKIE_EXPIRATION_DAYS=${COOKIE_EXPIRATION_DAYS}
+PRODUCTION=${PRODUCTION}
+PORT=${PORT}
+EOF
+
             cd ~/sourcecode
             echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+
+            # Export for compose substitution (if docker-compose.prod.yaml uses ${IMAGE_TAG})
             export DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME"
             export IMAGE_TAG="'$IMAGE_TAG'"
+
+            # Compose pull & up; assumes your compose file references env_file: backend.env for the backend service
             docker compose -f docker-compose.prod.yaml pull
             docker compose -f docker-compose.prod.yaml up -d --remove-orphans
+
             docker image prune -f
           '
-
