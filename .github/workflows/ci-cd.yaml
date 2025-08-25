@@ -2,31 +2,26 @@ name: ci-cd  # Workflow name in GitHub Actions
 
 on:
   push:
-    branches: [ main ]         # Only run on pushes to main
+    branches: [ main ]
   pull_request:
-    branches: [ main ]         # Also run on PRs into main
+    branches: [ main ]
   workflow_dispatch:
 
 env:
-  # Image names (non-secret): keep them parameterized
-  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/mern-frontend
-  BACKEND_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/mern-backend
-
-  # Frontend build-time base URL (non-secret)
-  REACT_APP_BASE_URL: ${{ vars.REACT_APP_BASE_URL }}
+  FRONTEND_IMAGE: mern-frontend
+  BACKEND_IMAGE: mern-backend
+  REACT_APP_BASE_URL: /api
 
 jobs:
 
-  ### 1. Code Quality & Security Checks ###
   quality_checks:
     name: Lint + Sonar + Security
     runs-on: [self-hosted, linux, x64, docker]
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Sonar prefers full history for blame/PR decoration
+          fetch-depth: 0
 
-      # --- Backend Lint / Format ---
       - name: Setup Node for backend
         uses: actions/setup-node@v4
         with:
@@ -40,13 +35,12 @@ jobs:
 
       - name: ESLint backend
         working-directory: backend
-        run: npx eslint . --ext .js,.jsx --max-warnings=0  # fail on warnings
+        run: npx eslint . --ext .js,.jsx --max-warnings=0
 
       - name: Prettier backend
         working-directory: backend
         run: npx prettier --check .
 
-      # --- Frontend Lint / Format ---
       - name: Setup Node for frontend
         uses: actions/setup-node@v4
         with:
@@ -66,38 +60,30 @@ jobs:
         working-directory: frontend
         run: npx prettier --check .
 
-      # --- SonarQube / SonarCloud scan ---
-      # Required:
-      #   secrets.SONAR_TOKEN
-      #   secrets.SONAR_HOST_URL (e.g., https://sonarcloud.io or your SonarQube URL)
-      #   vars.SONAR_PROJECT_KEY
-      # Optional (SonarCloud only):
-      #   vars.SONAR_ORG
       - name: Sonar Scan
         uses: SonarSource/sonarqube-scan-action@v2
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
+          projectBaseDir: .
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORG }}
             -Dsonar.sources=backend,frontend
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
             -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info,frontend/coverage/lcov.info
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      # --- Static Security Scan (filesystem) ---
       - name: Trivy FS scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: fs
           format: table
-          exit-code: '1'           # fail on HIGH/CRITICAL vulns
+          exit-code: '1'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           skip-dirs: node_modules
 
-  ### 2. Backend Build & Push ###
   build_push_backend:
     name: Build & Push Backend
     runs-on: [self-hosted, linux, x64, docker]
@@ -115,7 +101,7 @@ jobs:
         id: meta_be
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.BACKEND_IMAGE }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}
           tags: |
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
@@ -131,17 +117,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # --- Image scan ---
       - name: Trivy Image backend
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
           format: table
           exit-code: '1'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
 
-  ### 3. Frontend Build & Push ###
   build_push_frontend:
     name: Build & Push Frontend
     runs-on: [self-hosted, linux, x64, docker]
@@ -159,7 +143,7 @@ jobs:
         id: meta_fe
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.FRONTEND_IMAGE }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_IMAGE }}
           tags: |
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
@@ -177,17 +161,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # --- Image scan ---
       - name: Trivy Image frontend
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           format: table
           exit-code: '1'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
 
-  ### 4. Deploy ###
   deploy:
     name: Deploy to VM
     runs-on: [self-hosted, linux, x64, docker]
@@ -199,23 +181,20 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          printf "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+          printf "Host *
+	StrictHostKeyChecking no
+" > ~/.ssh/config
 
       - name: Deploy via SSH
         env:
-          # Registry auth
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           IMAGE_TAG: ${{ github.sha }}
-
-          # Backend secrets (runtime)
           MONGO_URI: ${{ secrets.MONGO_URI }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           EMAIL: ${{ secrets.EMAIL }}
           PASSWORD: ${{ secrets.PASSWORD }}
           ORIGIN: ${{ secrets.ORIGIN }}
-
-          # Backend non-secret runtime config
           LOGIN_TOKEN_EXPIRATION: ${{ vars.LOGIN_TOKEN_EXPIRATION }}
           OTP_EXPIRATION_TIME: ${{ vars.OTP_EXPIRATION_TIME }}
           PASSWORD_RESET_TOKEN_EXPIRATION: ${{ vars.PASSWORD_RESET_TOKEN_EXPIRATION }}
@@ -225,8 +204,6 @@ jobs:
         run: |
           ssh -p "${{ secrets.VM_SSH_PORT }}" "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" bash -lc '
             set -e
-
-            # Create or update backend.env from pipeline-provided env vars
             mkdir -p ~/sourcecode
             cat > ~/sourcecode/backend.env <<EOF
 MONGO_URI=${MONGO_URI}
@@ -241,17 +218,11 @@ COOKIE_EXPIRATION_DAYS=${COOKIE_EXPIRATION_DAYS}
 PRODUCTION=${PRODUCTION}
 PORT=${PORT}
 EOF
-
             cd ~/sourcecode
             echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-
-            # Export for compose substitution (if docker-compose.prod.yaml uses ${IMAGE_TAG})
             export DOCKERHUB_USERNAME="$DOCKERHUB_USERNAME"
             export IMAGE_TAG="'$IMAGE_TAG'"
-
-            # Compose pull & up; assumes your compose file references env_file: backend.env for the backend service
             docker compose -f docker-compose.prod.yaml pull
             docker compose -f docker-compose.prod.yaml up -d --remove-orphans
-
             docker image prune -f
           '
