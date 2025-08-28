@@ -7,6 +7,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/mern-frontend
   BACKEND_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/mern-backend
@@ -52,17 +56,19 @@ jobs:
         working-directory: frontend
         run: npx prettier --check .
 
-      # Optional Sonar (runs only if secrets are present)
+      # Optional Sonar (guarded by env presence to avoid 'secrets' in if:)
       - name: Sonar Scan
-        if: ${{ secrets.SONAR_TOKEN && secrets.SONAR_HOST_URL && vars.SONAR_PROJECT_KEY && vars.SONAR_ORG }}
-        uses: SonarSource/sonarqube-scan-action@v2
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN || '' }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || '' }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || '' }}
+          SONAR_ORG: ${{ vars.SONAR_ORG || '' }}
+        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORG != '' }}
+        uses: SonarSource/sonarqube-scan-action@v2
         with:
           args: >
-            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
-            -Dsonar.organization=${{ vars.SONAR_ORG }}
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ env.SONAR_ORG }}
             -Dsonar.sources=backend,frontend
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
             -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info,frontend/coverage/lcov.info
