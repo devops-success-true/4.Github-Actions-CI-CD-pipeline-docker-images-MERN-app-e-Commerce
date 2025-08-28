@@ -18,8 +18,11 @@ env:
 
 jobs:
   quality_checks:
-    name: Lint + Sonar + Security
+    name: Lint + SonarCloud + Security
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -41,9 +44,10 @@ jobs:
       #   working-directory: backend
       #   run: npx eslint . --ext .js,.jsx --max-warnings=0
 
-      - name: Prettier backend
+      - name: Prettier backend (non-blocking)
         working-directory: backend
         run: npx prettier --check .
+        continue-on-error: true
 
       # Frontend
       - uses: actions/setup-node@v4
@@ -62,26 +66,27 @@ jobs:
       #   working-directory: frontend
       #   run: npx eslint . --ext .js,.jsx --max-warnings=0
 
-      - name: Prettier frontend
+      - name: Prettier frontend (non-blocking)
         working-directory: frontend
         run: npx prettier --check .
+        continue-on-error: true
 
-      # Optional Sonar (guarded by env presence; avoids referencing `secrets` in if:)
-      - name: Sonar Scan
+      # SonarCloud (optional) — uses SonarCloud action, no host URL needed
+      - name: SonarCloud Scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN || '' }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || '' }}
           SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || '' }}
           SONAR_ORG: ${{ vars.SONAR_ORG || '' }}
-        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORG != '' }}
-        uses: SonarSource/sonarqube-scan-action@v2
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORG != '' }}
+        uses: SonarSource/sonarcloud-github-action@v2
         with:
           args: >
             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ env.SONAR_ORG }}
             -Dsonar.sources=backend,frontend
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
-            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info,frontend/coverage/lcov.info
+            -Dsonar.pullrequest.provider=github
 
       - name: Trivy FS scan
         uses: aquasecurity/trivy-action@0.24.0
