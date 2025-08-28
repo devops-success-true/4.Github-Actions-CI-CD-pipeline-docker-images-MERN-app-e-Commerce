@@ -68,6 +68,7 @@ jobs:
         run: npx prettier --check .
         continue-on-error: true
 
+      # NOTE: This requires SonarCloud Automatic Analysis to be DISABLED for the project.
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v2
         env:
