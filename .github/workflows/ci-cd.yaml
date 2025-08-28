@@ -130,7 +130,11 @@ jobs:
         with:
           images: ${{ env.BACKEND_IMAGE }}
           tags: |
+            # NEW: richer tagging without breaking your existing SHA/latest scheme
             type=raw,value=${{ github.sha }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build & Push backend
@@ -138,18 +142,21 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          push: true
+          # NEW: only push from main, tags, or manual runs. Otherwise just build (no push).
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.meta_be.outputs.tags }}
           labels: ${{ steps.meta_be.outputs.labels }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          # NEW: branch-scoped caches so branches don't clobber each other
+          cache-from: type=gha,scope=backend-${{ github.ref_name }}
+          cache-to:   type=gha,mode=max,scope=backend-${{ github.ref_name }}
 
       - name: Trivy Image (backend, advisory)
+        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
           format: table
-          exit-code: '0'        # was '1' -> don't fail CI
+          exit-code: '0'        # advisory
           ignore-unfixed: true
           severity: HIGH,CRITICAL
         continue-on-error: true
@@ -180,31 +187,36 @@ jobs:
         with:
           images: ${{ env.FRONTEND_IMAGE }}
           tags: |
+            # NEW: richer tagging without breaking your existing SHA/latest scheme
             type=raw,value=${{ github.sha }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build & Push frontend
         uses: docker/build-push-action@v6
         with:
-          # CHANGED: The Dockerfile copies 'frontend/…' and 'nginx/nginx.conf'.
-          # It expects repo-root paths -> set build context to the repo root '.'
-          # (Context used to be './frontend', which caused '... not found' errors.)
+          # Dockerfile expects repo-root paths; context must be '.'
           context: .
           file: ./frontend/Dockerfile
-          push: true
+          # NEW: only push from main, tags, or manual runs. Otherwise just build (no push).
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.meta_fe.outputs.tags }}
           labels: ${{ steps.meta_fe.outputs.labels }}
           build-args: |
             REACT_APP_BASE_URL=${{ env.REACT_APP_BASE_URL }}
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
+          # NEW: branch-scoped caches so branches don't clobber each other
+          cache-from: type=gha,scope=frontend-${{ github.ref_name }}
+          cache-to:   type=gha,mode=max,scope=frontend-${{ github.ref_name }}
 
       - name: Trivy Image (frontend, advisory)
+        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           format: table
-          exit-code: '0'        # was '1' -> don't fail CI
+          exit-code: '0'        # advisory
           ignore-unfixed: true
           severity: HIGH,CRITICAL
         continue-on-error: true
