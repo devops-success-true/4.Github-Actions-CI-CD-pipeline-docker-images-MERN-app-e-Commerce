@@ -71,34 +71,35 @@ jobs:
         run: npx prettier --check .
         continue-on-error: true
 
-      # SonarCloud (optional) — uses SonarCloud action, no host URL needed.
-      # Runs only if SONAR_* are provided (guarded via env so we don't reference `secrets` in `if:`).
+      # --- SonarCloud Analysis ---
       - name: SonarCloud Scan
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN || '' }}
-          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || '' }}
-          SONAR_ORG: ${{ vars.SONAR_ORG || '' }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORG != '' }}
         uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
-            -Dsonar.organization=${{ env.SONAR_ORG }}
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ vars.SONAR_ORG }}
             -Dsonar.sources=backend,frontend
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
             -Dsonar.pullrequest.provider=github
 
+      # --- SonarCloud Quality Gate (enforce pass/fail) ---
+      - name: SonarCloud Quality Gate
+        uses: SonarSource/sonarcloud-github-action@v2
+        with:
+          qualitygate: true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
       # --- Trivy FS scan made advisory ---
-      # Reason: current deps have HIGH/CRITICAL CVEs and we want the pipeline to continue (build/push images).
-      # Change: exit-code from '1' -> '0' and added continue-on-error=true so findings don't fail CI.
       - name: Trivy FS scan (advisory)
         uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: fs
           vuln-type: os,library
           format: table
-          exit-code: '0'        # was '1' -> allow pipeline to proceed while we fix vulnerabilities later
+          exit-code: '0'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           skip-dirs: node_modules
@@ -111,7 +112,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Ensure GHA cache export works
       - name: Set up Buildx (docker-container)
         uses: docker/setup-buildx-action@v3
         with:
@@ -130,7 +130,6 @@ jobs:
         with:
           images: ${{ env.BACKEND_IMAGE }}
           tags: |
-            # NEW: richer tagging without breaking your existing SHA/latest scheme
             type=raw,value=${{ github.sha }}
             type=ref,event=branch
             type=ref,event=tag
@@ -142,11 +141,9 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          # NEW: only push from main, tags, or manual runs. Otherwise just build (no push).
           push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.meta_be.outputs.tags }}
           labels: ${{ steps.meta_be.outputs.labels }}
-          # NEW: branch-scoped caches so branches don't clobber each other
           cache-from: type=gha,scope=backend-${{ github.ref_name }}
           cache-to:   type=gha,mode=max,scope=backend-${{ github.ref_name }}
 
@@ -156,7 +153,7 @@ jobs:
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
           format: table
-          exit-code: '0'        # advisory
+          exit-code: '0'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
         continue-on-error: true
@@ -168,7 +165,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Ensure GHA cache export works
       - name: Set up Buildx (docker-container)
         uses: docker/setup-buildx-action@v3
         with:
@@ -187,7 +183,6 @@ jobs:
         with:
           images: ${{ env.FRONTEND_IMAGE }}
           tags: |
-            # NEW: richer tagging without breaking your existing SHA/latest scheme
             type=raw,value=${{ github.sha }}
             type=ref,event=branch
             type=ref,event=tag
@@ -197,16 +192,13 @@ jobs:
       - name: Build & Push frontend
         uses: docker/build-push-action@v6
         with:
-          # Dockerfile expects repo-root paths; context must be '.'
           context: .
           file: ./frontend/Dockerfile
-          # NEW: only push from main, tags, or manual runs. Otherwise just build (no push).
           push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.meta_fe.outputs.tags }}
           labels: ${{ steps.meta_fe.outputs.labels }}
           build-args: |
             REACT_APP_BASE_URL=${{ env.REACT_APP_BASE_URL }}
-          # NEW: branch-scoped caches so branches don't clobber each other
           cache-from: type=gha,scope=frontend-${{ github.ref_name }}
           cache-to:   type=gha,mode=max,scope=frontend-${{ github.ref_name }}
 
@@ -216,7 +208,7 @@ jobs:
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           format: table
-          exit-code: '0'        # advisory
+          exit-code: '0'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
         continue-on-error: true
