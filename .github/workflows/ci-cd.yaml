@@ -20,9 +20,6 @@ jobs:
   quality_checks:
     name: Lint + SonarCloud + Security
     runs-on: ubuntu-latest
-    # IMPORTANT: your SONAR_TOKEN, SONAR_PROJECT_KEY and SONAR_ORG are stored under
-    # the GitHub Environment named "4.MERN_CI_CD-Pipeline". Attach the job to that
-    # environment so the job can access those secrets/vars.
     environment: 4.MERN_CI_CD-Pipeline
     permissions:
       contents: read
@@ -41,9 +38,7 @@ jobs:
         working-directory: backend
         run: npm ci
 
-      # --- ESLint backend disabled ---
-      # Reason: repo has no ESLint v9 flat config; running ESLint would fail CI.
-      # Action: keep commented until an `eslint.config.js/mjs` exists in the repo.
+      # ESLint disabled intentionally (no flat config in repo)
       # - name: ESLint backend
       #   working-directory: backend
       #   run: npx eslint . --ext .js,.jsx --max-warnings=0
@@ -63,9 +58,7 @@ jobs:
         working-directory: frontend
         run: npm ci --legacy-peer-deps
 
-      # --- ESLint frontend disabled ---
-      # Reason: repo has no ESLint v9 flat config; running ESLint would fail CI.
-      # Action: keep commented until an `eslint.config.js/mjs` exists in the repo.
+      # ESLint disabled intentionally (no flat config in repo)
       # - name: ESLint frontend
       #   working-directory: frontend
       #   run: npx eslint . --ext .js,.jsx --max-warnings=0
@@ -75,31 +68,21 @@ jobs:
         run: npx prettier --check .
         continue-on-error: true
 
-      # SonarCloud Scan (reads SONAR_TOKEN from Environment secret, and project/org from Environment vars)
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN:  ${{ secrets.SONAR_TOKEN }}
         with:
-          args: >
-            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
-            -Dsonar.organization=${{ vars.SONAR_ORG }}
-            -Dsonar.sources=backend,frontend
-            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
-            -Dsonar.pullrequest.provider=github
-            -Dsonar.qualitygate.wait=true  # wait for Quality Gate and fail job if it fails
+          args: -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }} -Dsonar.organization=${{ vars.SONAR_ORG }} -Dsonar.sources=backend,frontend -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/** -Dsonar.pullrequest.provider=github -Dsonar.qualitygate.wait=true
 
-      # --- Trivy FS scan made advisory ---
-      # Reason: current deps have HIGH/CRITICAL CVEs and we want the pipeline to continue (build/push images).
-      # Change: exit-code from '1' -> '0' and added continue-on-error=true so findings don't fail CI.
       - name: Trivy FS scan (advisory)
         uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: fs
           vuln-type: os,library
           format: table
-          exit-code: '0'        # advisory only
+          exit-code: '0'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           skip-dirs: node_modules
@@ -112,7 +95,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Ensure GHA cache export works
       - name: Set up Buildx (docker-container)
         uses: docker/setup-buildx-action@v3
         with:
@@ -131,7 +113,6 @@ jobs:
         with:
           images: ${{ env.BACKEND_IMAGE }}
           tags: |
-            # richer tagging without breaking SHA/latest scheme
             type=raw,value=${{ github.sha }}
             type=ref,event=branch
             type=ref,event=tag
@@ -143,11 +124,9 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          # only push from main, tags, or manual runs. Otherwise just build (no push).
           push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.meta_be.outputs.tags }}
           labels: ${{ steps.meta_be.outputs.labels }}
-          # branch-scoped caches so branches don't clobber each other
           cache-from: type=gha,scope=backend-${{ github.ref_name }}
           cache-to:   type=gha,mode=max,scope=backend-${{ github.ref_name }}
 
@@ -157,7 +136,7 @@ jobs:
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
           format: table
-          exit-code: '0'        # advisory
+          exit-code: '0'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
         continue-on-error: true
@@ -169,7 +148,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Ensure GHA cache export works
       - name: Set up Buildx (docker-container)
         uses: docker/setup-buildx-action@v3
         with:
@@ -188,7 +166,6 @@ jobs:
         with:
           images: ${{ env.FRONTEND_IMAGE }}
           tags: |
-            # richer tagging without breaking SHA/latest scheme
             type=raw,value=${{ github.sha }}
             type=ref,event=branch
             type=ref,event=tag
@@ -198,16 +175,13 @@ jobs:
       - name: Build & Push frontend
         uses: docker/build-push-action@v6
         with:
-          # Dockerfile copies repo-root paths (frontend/* and nginx/nginx.conf) -> use '.' as context
           context: .
           file: ./frontend/Dockerfile
-          # only push from main, tags, or manual runs. Otherwise just build (no push).
           push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.meta_fe.outputs.tags }}
           labels: ${{ steps.meta_fe.outputs.labels }}
           build-args: |
             REACT_APP_BASE_URL=${{ env.REACT_APP_BASE_URL }}
-          # branch-scoped caches so branches don't clobber each other
           cache-from: type=gha,scope=frontend-${{ github.ref_name }}
           cache-to:   type=gha,mode=max,scope=frontend-${{ github.ref_name }}
 
@@ -217,7 +191,7 @@ jobs:
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           format: table
-          exit-code: '0'        # advisory
+          exit-code: '0'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
         continue-on-error: true
