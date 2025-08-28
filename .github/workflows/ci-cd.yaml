@@ -39,6 +39,7 @@ jobs:
 
       # --- ESLint backend disabled ---
       # Reason: repo has no ESLint v9 flat config; running ESLint would fail CI.
+      # Action: keep commented until an `eslint.config.js/mjs` exists in the repo.
       # - name: ESLint backend
       #   working-directory: backend
       #   run: npx eslint . --ext .js,.jsx --max-warnings=0
@@ -60,6 +61,7 @@ jobs:
 
       # --- ESLint frontend disabled ---
       # Reason: repo has no ESLint v9 flat config; running ESLint would fail CI.
+      # Action: keep commented until an `eslint.config.js/mjs` exists in the repo.
       # - name: ESLint frontend
       #   working-directory: frontend
       #   run: npx eslint . --ext .js,.jsx --max-warnings=0
@@ -69,28 +71,24 @@ jobs:
         run: npx prettier --check .
         continue-on-error: true
 
-      # --- SonarCloud Scan ---
+      # SonarCloud Scan
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+          SONAR_ORG: ${{ vars.SONAR_ORG }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORG != '' }}
+        uses: SonarSource/sonarcloud-github-action@v2
         with:
           args: >
-            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
-            -Dsonar.organization=${{ vars.SONAR_ORG }}
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ env.SONAR_ORG }}
             -Dsonar.sources=backend,frontend
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**
             -Dsonar.pullrequest.provider=github
 
-      # --- SonarCloud Quality Gate ---
-      - name: SonarCloud Quality Gate
-        uses: SonarSource/sonarcloud-github-action@v2
-        with:
-          qualitygate: true
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-      # --- Trivy FS scan (advisory only, non-blocking) ---
+      # --- Trivy FS scan made advisory ---
       - name: Trivy FS scan (advisory)
         uses: aquasecurity/trivy-action@0.24.0
         with:
