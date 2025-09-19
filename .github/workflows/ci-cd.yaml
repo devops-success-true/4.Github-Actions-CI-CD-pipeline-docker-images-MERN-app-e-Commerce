@@ -207,16 +207,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: devops-success-true/5.Private-AKS-cluster-Terraform
-          token: ${{ secrets.GH_PAT }}   # personal access token or fine-grained PAT
+          token: ${{ secrets.GH_PAT }}   # PAT with repo write perms
           ref: main
 
+      - name: Install yq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          sudo snap install yq
+
+      # Update frontend image tag
       - name: Update frontend tag
         run: |
-          sed -i "s|tag:.*|tag: \"${{ github.sha }}\"|" k8s/helm/mern/values.yaml
+          yq e -i ".frontend.tag = \"${{ github.sha }}\"" k8s/helm/mern/values.yaml
 
+      # Update backend image tag
       - name: Update backend tag
         run: |
-          sed -i "s|tag:.*|tag: \"${{ github.sha }}\"|" k8s/helm/mern/values.yaml
+          yq e -i ".backend.tag = \"${{ github.sha }}\"" k8s/helm/mern/values.yaml
 
       - name: Commit & Push changes
         run: |
